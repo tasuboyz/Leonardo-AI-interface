@@ -1,3 +1,7 @@
+import Elements from "./elements.js";
+
+const elements = new Elements();
+
 const API_BASE_URL = "https://cloud.leonardo.ai/api/rest/v1";
 
 // Fetch models on page load
@@ -48,7 +52,100 @@ function populateModelSelect(data) {
     });
 }
 
+async function improvePrompt() {
+    const promptInput = document.getElementById('prompt');
+    const wand = document.querySelector('.magic-wand');
+    const originalPrompt = promptInput.value.trim();
 
+    if (!originalPrompt) {
+        alert('Please enter a prompt first');
+        return;
+    }
+
+    try {
+        // Add spinning animation
+        wand.classList.add('spinning');
+
+        const response = await fetch('https://cloud.leonardo.ai/api/rest/v1/prompt/improve', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${localStorage.getItem('apiToken')}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                prompt: originalPrompt
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to improve prompt');
+        }
+
+        const data = await response.json();
+        if (data.promptGeneration) {
+            promptInput.value = data.promptGeneration.prompt; // Corretto l'accesso alla proprietà
+            // Add subtle highlight animation to show it changed
+            promptInput.style.animation = 'highlightChange 0.5s ease';
+            setTimeout(() => {
+                promptInput.style.animation = '';
+            }, 500);
+        }
+    } catch (error) {
+        console.error('Error improving prompt:', error);
+        alert('Failed to improve prompt. Please try again.');
+    } finally {
+        // Remove spinning animation
+        wand.classList.remove('spinning');
+    }
+  }
+
+function updatePresetOptions() {
+    const alchemyEnabled = document.getElementById('alchemyToggle').checked;
+    const presetSelect = document.getElementById('preset');
+    
+    presetSelect.innerHTML = ''; // Clear existing options
+    
+    if (alchemyEnabled) {
+        // Alchemy presets
+        const alchemyPresets = [
+            'NONE',
+            'ANIME',
+            'CREATIVE',
+            'DYNAMIC', 
+            'ENVIRONMENT',
+            'GENERAL',
+            'ILLUSTRATION',
+            'PHOTOGRAPHY',
+            'RAYTRACED',
+            'RENDER_3D',
+            'SKETCH_BW',
+            'SKETCH_COLOR'
+        ];
+        
+        alchemyPresets.forEach(preset => {
+            const option = document.createElement('option');
+            option.value = preset.toLowerCase();
+            option.textContent = preset;
+            presetSelect.appendChild(option);
+        });
+    } else {
+        // Non-alchemy presets
+        const standardPresets = [
+            'NONE',
+            'LEONARDO'
+        ];
+        
+        standardPresets.forEach(preset => {
+            const option = document.createElement('option');
+            option.value = preset.toLowerCase();
+            option.textContent = preset;
+            presetSelect.appendChild(option);
+        });
+    }
+}
+
+// Add event listener to alchemy toggle
+document.getElementById('alchemyToggle').addEventListener('change', updatePresetOptions);
 
 function generateImage() {
     const prompt = document.getElementById('prompt');
@@ -79,7 +176,7 @@ function generateImage() {
     
     const parameters = {
         prompt: prompt.value,
-        elements: selectedElements,
+        elements: elements.selectedElements,
         modelId: selectedModelId,
         preset: document.getElementById('preset').value,
         size: document.getElementById('size').value,
@@ -205,7 +302,7 @@ function confirmModelSelection() {
         document.getElementById('modelDisplay').value = modelName;
         
         // Clear existing element selections when model changes
-        selectedElements = [];
+        Elements.selectedElements = [];
         document.getElementById('element').value = '';
         
         // Refresh elements list with new filter
@@ -216,187 +313,70 @@ function confirmModelSelection() {
     closeModels();
 }
 
-// Special models that require filtered elements
-const SPECIAL_MODELS = [
-    'Anime Pastel Dream',
-    'DreamSharper v7', 
-    'Absolute Reality v1.6',
-    '3D Animation Style',
-    'Stable Diffusion 1.5',
-    'Stable Diffusion 2.1',
-    'Leonardo Phoenix'
-];
+async function calculatePrice() {
+    const size = document.getElementById('size').value;
+    const [width, height] = size.split('x').map(Number);
+    const elements = Elements.selectedElements || [];
+    const alchemyEnabled = document.getElementById('alchemyToggle').checked;
+    const selectedModelName = document.getElementById('modelDisplay').value;
 
-// Elements handling
-let selectedElements = [];
-
-async function fetchElements() {
-    try {
-        const token = localStorage.getItem('apiToken');
-        const response = await fetch('https://cloud.leonardo.ai/api/rest/v1/elements', {
-            headers: {
-                'Authorization': `Bearer ${token}`
+    // Build pricing payload
+    const payload = {
+        serviceParams: {
+            IMAGE_GENERATION: {
+                imageHeight: height,
+                imageWidth: width,
+                numImages: 1,
+                inferenceSteps: 30,
+                promptMagic: false,
+                alchemyMode: alchemyEnabled,
+                highResolution: width >= 768 || height >= 768,
+                loraCount: elements.length,
+                isModelCustom: false,
+                controlnetsCost: 0,
+                isPhoenix: selectedModelName === 'Leonardo Phoenix',
+                isSDXL: selectedModelName.includes('XL'),
+                isSDXLLightning: false
             }
+        },
+        service: "IMAGE_GENERATION"
+    };
+
+    try {
+        console.log(payload)
+        const response = await fetch('https://cloud.leonardo.ai/api/rest/v1/pricing-calculator', {
+            method: 'POST',
+            headers: {
+                'accept': 'application/json',
+                'content-type': 'application/json',
+                'authorization': `Bearer ${localStorage.getItem('apiToken')}`
+            },
+            
+            body: JSON.stringify(payload)
         });
-        
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
+
+        if (!response.ok) throw new Error('Failed to calculate price');
         
         const data = await response.json();
-        let elements = data.loras;
-        
-        if (!Array.isArray(elements)) {
-            throw new Error('Invalid data format received from API');
-        }
-
-        // Get currently selected model name
-        const selectedModelName = document.getElementById('modelDisplay').value;
-        
-        // For Leonardo Phoenix, return empty array
-        if (selectedModelName === 'Leonardo Phoenix') {
-            elements = [];
-        } else if (SPECIAL_MODELS.includes(selectedModelName)) {
-            // For special models, show only konyconi elements
-            elements = elements.filter(element => element.creatorName === 'konyconi');
-        } else {
-            // For all other models, show only Leonardo elements
-            elements = elements.filter(element => element.creatorName.toLowerCase().includes('leonardo'));
-        }
-        
-        displayElements(elements);
-        
-        // Show message if no elements available
-        const container = document.querySelector('.elements-container');
-        if (elements.length === 0) {
-            container.innerHTML = '<div class="no-elements" style="padding: 20px; text-align: center;">No elements available for this model</div>';
-        }
+        console.log('Price:', data.calculateProductionApiServiceCost);
+        return data.calculateProductionApiServiceCost.cost || 0;
     } catch (error) {
-        console.error('Error fetching elements:', error);
+        console.error('Error calculating price:', error);
+        return null;
     }
 }
 
-function displayElements(elements) {
-    const container = document.querySelector('.elements-container');
-    container.innerHTML = '';
-    
-    elements.forEach(element => {
-        const elementDiv = document.createElement('div');
-        elementDiv.className = 'element-option';
-        elementDiv.setAttribute('data-element-id', element.akUUID);
-        
-        if (selectedElements.includes(element.akUUID)) {
-            elementDiv.classList.add('selected');
-        }
-        
-        elementDiv.innerHTML = `
-            ${element.urlImage ? 
-                `<img src="${element.urlImage}" alt="Element thumbnail" class="element-thumbnail">` :
-                `<div class="no-thumbnail">No Image</div>`
-            }
-            <div class="element-info">
-                <div class="element-title">${element.name}</div>
-                <div class="element-creator">By: ${element.creatorName}</div>
-                <div class="element-description">${element.description || 'No description available'}</div>
-            </div>
-        `;
-        
-        elementDiv.addEventListener('click', () => toggleElementSelection(element.akUUID));
-        container.appendChild(elementDiv);
-    });
-}
-
-function filterElements() {
-    const filterText = document.getElementById('elementFilter').value.toLowerCase();
-    const elementOptions = document.querySelectorAll('.element-option');
-    
-    elementOptions.forEach(option => {
-        const title = option.querySelector('.element-title').textContent.toLowerCase();
-        const creator = option.querySelector('.element-creator').textContent.toLowerCase();
-        const description = option.querySelector('.element-description').textContent.toLowerCase();
-        
-        if (title.includes(filterText) || creator.includes(filterText) || description.includes(filterText)) {
-            option.style.display = 'flex';
-        } else {
-            option.style.display = 'none';
-        }
-    });
-}
-
-function toggleElementSelection(elementId) {
-    const elementDiv = document.querySelector(`.element-option[data-element-id="${elementId}"]`);
-    
-    if (selectedElements.includes(elementId)) {
-        // Remove element from selection with animation
-        elementDiv.style.animation = 'deselectPulse 0.3s ease';
-        setTimeout(() => {
-            selectedElements = selectedElements.filter(id => id !== elementId);
-            elementDiv.classList.remove('selected');
-            elementDiv.style.animation = '';
-        }, 300);
+// Update the interface to show price
+async function updatePriceDisplay() {
+    const credits = await calculatePrice();
+    const priceDisplay = document.getElementById('priceDisplay');
+    if (credits !== null) {
+        priceDisplay.textContent = `${credits} credits`;
+        priceDisplay.style.color = '';
     } else {
-        // Add element if under limit with animation
-        if (selectedElements.length >= 4) {
-            elementDiv.style.animation = 'errorShake 0.5s ease';
-            setTimeout(() => {
-                elementDiv.style.animation = '';
-            }, 500);
-            alert('Maximum 4 elements can be selected');
-            return;
-        }
-        elementDiv.style.animation = 'selectPulse 0.3s ease';
-        selectedElements.push(elementId);
-        elementDiv.classList.add('selected');
-        elementDiv.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        setTimeout(() => {
-            elementDiv.style.animation = '';
-        }, 300);
+        priceDisplay.textContent = 'Price calculation failed';
+        priceDisplay.style.color = 'red';
     }
-    
-    updateElementsDisplay();
-}
-
-function updateElementsDisplay() {
-    const elementInput = document.getElementById('element');
-    
-    if (selectedElements.length > 0) {
-        // Get names of selected elements
-        const selectedNames = selectedElements.map(id => {
-            const element = document.querySelector(`.element-option[data-element-id="${id}"]`);
-            return element ? element.querySelector('.element-title').textContent : id;
-        });
-        elementInput.value = selectedNames.join(', ');
-    } else {
-        elementInput.value = '';
-    }
-}
-
-function clearElementSelection() {
-    selectedElements = [];
-    document.querySelectorAll('.element-option').forEach(opt => {
-        opt.classList.remove('selected');
-    });
-    updateElementsDisplay();
-}
-
-function confirmElementSelection() {
-    updateElementsDisplay();
-    closeElements();
-}
-
-function openElements() {
-    const modal = document.getElementById('elementsModal');
-    modal.style.display = 'block';
-    setTimeout(() => modal.classList.add('show'), 10);
-    const container = document.querySelector('.elements-container');
-    container.classList.add('loading');
-    fetchElements().finally(() => container.classList.remove('loading'));
-}
-
-function closeElements() {
-    const modal = document.getElementById('elementsModal');
-    modal.classList.remove('show');
-    setTimeout(() => modal.style.display = 'none', 300);
 }
 
 // Initialize
@@ -408,8 +388,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const savedTheme = localStorage.getItem('selectedTheme') || 'default';
     document.getElementById('theme').value = savedTheme;
     applyTheme(savedTheme);
-    
-    // Restore selected model
+    updatePresetOptions();
+
     const savedModelId = localStorage.getItem('selectedModelId');
     if (savedModelId) {
         const savedModelOption = document.querySelector(`.model-option[data-model-id="${savedModelId}"]`);
@@ -422,7 +402,12 @@ document.addEventListener('DOMContentLoaded', () => {
     // Add Photo Real toggle listener
     document.getElementById('photoRealToggle').addEventListener('change', filterPhotoRealModels);
     
-    // Add touch support
+    ['size', 'alchemyToggle'].forEach(id => {
+        document.getElementById(id).addEventListener('change', updatePriceDisplay);
+    });
+
+    // Initial price calculation
+    updatePriceDisplay();
     addTouchSupport();
 });
 
@@ -451,8 +436,28 @@ window.onclick = function(event) {
     }
 }
 
-window.openElements = openElements;
-window.closeElements = closeElements;
+document.getElementById('openElements').onclick = function() {
+    elements.openElements();
+};
+
+document.getElementById('closeElements').onclick = function() {
+    elements.closeElements();
+};
+
+document.getElementById('confirmElementSelection').onclick = function() {
+    elements.confirmElementSelection();
+};
+
+document.getElementById('clearElementSelection').onclick = function() {
+    elements.clearElementSelection();
+};
+
+elements.filterElements = function() {
+    const filterValue = document.getElementById('elementFilter').value.toLowerCase();
+    const filteredElements = elements.getElements().filter(element => element.toLowerCase().includes(filterValue));
+    console.log('Filtered Elements:', filteredElements);
+};
+
 window.closeResult = closeResult;
 window.closeSettings = closeSettings;
 window.openSettings = openSettings;
@@ -461,6 +466,4 @@ window.closeModels = closeModels;
 window.generateImage = generateImage;
 window.saveSettings = saveSettings;
 window.confirmModelSelection = confirmModelSelection;
-window.confirmElementSelection = confirmElementSelection;
-window.clearElementSelection = clearElementSelection;
-window.filterElements = filterElements;
+window.improvePrompt = improvePrompt;

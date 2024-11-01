@@ -1,0 +1,14 @@
+.price-container {
+    margin: 15px 0;
+    padding: 10px;
+    background: rgba(0,0,0,0.05);
+    border-radius: 4px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  #priceDisplay {
+    font-weight: bold;
+    color: var(--secondary-color);
+  }
