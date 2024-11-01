@@ -86,7 +86,7 @@ function generateImage() {
         alchemy: document.getElementById('alchemyToggle').checked,
         photoReal: document.getElementById('photoRealToggle').checked
     };
-    alert(JSON.stringify(parameters, null, 2))
+    //alert(JSON.stringify(parameters, null, 2))
     Telegram.WebApp.sendData(JSON.stringify(parameters, null, 2));
     document.getElementById('resultJson').textContent = JSON.stringify(parameters, null, 2);
     document.getElementById('resultModal').style.display = 'block';
